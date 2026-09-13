@@ -11,7 +11,7 @@ Custom nodes for ComfyUI.
 
 ## Global Fast Bypasser usage
 
-1. Add "Global Fast Bypasser" from the `utils` category.
+1. Add "Global Fast Bypasser" from the `kwnodes` category.
 2. In the "add name" box, type a node's title (e.g. "KSampler") or a group's title.
 3. A toggle row appears. Flip it to bypass / re-enable all matching nodes and groups.
 4. Right-click the node → "Remove row" → pick a name to delete that row.

@@ -31,18 +31,35 @@ function groupTitle(group) {
   return (group?.title || group?.name || "").trim();
 }
 
-function matchByName(name, graph) {
+function matchByName(name, graph, includeSubgraphs = false) {
   const q = String(name || "")
     .trim()
     .toLowerCase();
   if (!q) return { nodes: [], groups: [] };
   const nodes = [];
   const groups = [];
-  if (graph?._nodes) {
-    for (const n of graph._nodes) {
+  const seen = new Set();
+
+  // Walk a node list, matching titles and (optionally) descending into subgraphs.
+  const walk = (list, descend) => {
+    if (!list) return;
+    for (const n of list) {
+      if (!n) continue;
+      if (seen.has(n)) continue;
+      seen.add(n);
       if (nodeTitle(n).toLowerCase().includes(q)) nodes.push(n);
+      if (
+        descend &&
+        typeof n.isSubgraphNode === "function" &&
+        n.isSubgraphNode() &&
+        n.subgraph?.nodes
+      ) {
+        walk(n.subgraph.nodes, true);
+      }
     }
-  }
+  };
+  walk(graph?._nodes, includeSubgraphs);
+
   const collect = (arr) => {
     if (!Array.isArray(arr)) return;
     for (const g of arr) {
@@ -56,6 +73,7 @@ function matchByName(name, graph) {
     for (const sg of subgraphs.values()) {
       collect(sg._groups);
       collect(sg.groups);
+      if (includeSubgraphs) walk(sg._nodes, true);
     }
   }
   return { nodes, groups };
@@ -122,6 +140,13 @@ app.registerExtension({
         this._nameWidget = this.addWidget("text", "add name", "", (value) =>
           this._addName(value),
         );
+        this._subgraphWidget = this.addWidget(
+          "toggle",
+          "include subgraphs",
+          true,
+          () => this.setDirtyCanvas(true, true),
+          { on: "on", off: "off" },
+        );
       }
 
       onConfigure() {
@@ -134,7 +159,11 @@ app.registerExtension({
 
       _restoreRows() {
         for (const w of this.widgets || []) {
-          if (w.type === "toggle" && w !== this._nameWidget) {
+          if (
+            w.type === "toggle" &&
+            w !== this._nameWidget &&
+            w !== this._subgraphWidget
+          ) {
             if (!this._rows.some((r) => r.name === w.name)) {
               this._rows.push({ name: w.name, widget: w });
             }
@@ -174,7 +203,8 @@ app.registerExtension({
       _apply(name, bypass) {
         const graph = currentGraph();
         if (!graph) return;
-        const { nodes, groups } = matchByName(name, graph);
+        const includeSubgraphs = !!this._subgraphWidget?.value;
+        const { nodes, groups } = matchByName(name, graph, includeSubgraphs);
         const allNodes = [...nodes];
         for (const g of groups) allNodes.push(...groupNodes(g, graph));
         setModeDeep(allNodes, bypass ? MODE_BYPASS : MODE_ALWAYS);
@@ -184,9 +214,14 @@ app.registerExtension({
       _all(bypass) {
         const graph = currentGraph();
         if (!graph) return;
+        const includeSubgraphs = !!this._subgraphWidget?.value;
         const allNodes = [];
         for (const row of this._rows) {
-          const { nodes, groups } = matchByName(row.name, graph);
+          const { nodes, groups } = matchByName(
+            row.name,
+            graph,
+            includeSubgraphs,
+          );
           allNodes.push(...nodes);
           for (const g of groups) allNodes.push(...groupNodes(g, graph));
           row.widget.value = bypass;
