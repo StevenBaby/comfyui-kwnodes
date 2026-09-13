@@ -155,6 +155,27 @@ app.registerExtension({
         this._restoreRows();
       }
 
+      // Rebuild dynamic name rows from the serialized widget values, then restore
+      // their toggle state. Without this, dynamically added name rows are lost on
+      // reload because LiteGraph only restores widgets that exist in the constructor.
+      configure(data) {
+        const named = data?.widgets_values_named || {};
+        const staticNames = new Set(["add name", "include subgraphs"]);
+        for (const [name, value] of Object.entries(named)) {
+          if (staticNames.has(name)) continue;
+          if (this._rows.some((r) => r.name === name)) continue;
+          const widget = this.addWidget(
+            "toggle",
+            name,
+            !!value,
+            (v) => this._apply(name, v),
+            { on: "bypass", off: "active" },
+          );
+          this._rows.push({ name, widget });
+        }
+        return super.configure(data);
+      }
+
       _restoreRows() {
         for (const w of this.widgets || []) {
           if (
