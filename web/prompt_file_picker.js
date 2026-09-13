@@ -193,6 +193,28 @@ app.registerExtension({
         this.widgets.splice(idx, 0, custom);
         custom.callback = (value) => this._refreshFiles(value);
       }
+
+      // Add a refresh button: re-scan the directory's file list AND bump the
+      // `reload` hidden value so ComfyUI marks THIS node as changed and re-runs
+      // just it (re-reading the possibly-edited file), not the whole workflow.
+      const dirW = this.widgets?.find((w) => w.name === "directory");
+      if (dirW) {
+        const refreshBtn = this.addWidget(
+          "button",
+          "refresh",
+          "↻ Refresh",
+          () => {
+            this._refreshFiles(dirW.value);
+            const reloadWidget = this.widgets?.find((w) => w.name === "reload");
+            if (reloadWidget) {
+              reloadWidget.value = (reloadWidget.value ?? 0) + 1;
+              reloadWidget.callback?.(reloadWidget.value);
+            }
+          },
+          { serialize: false },
+        );
+        refreshBtn.label = "↻ Refresh";
+      }
       return r;
     };
 

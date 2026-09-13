@@ -24,6 +24,9 @@ class PromptFilePicker:
                 "file": (cls._list_files_abs(PROMPTS_ROOT),),
                 "mode": (["raw", "fenced"], {"default": "fenced"}),
             },
+            "hidden": {
+                "reload": ("INT", {"default": 0, "min": 0, "max": 2**31 - 1}),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -64,7 +67,13 @@ class PromptFilePicker:
             return [f"file '{file}' not found in {directory}"]
         return True
 
-    def pick(self, directory, file, mode):
+    @classmethod
+    def IS_CHANGED(cls, directory, file, mode, reload):
+        # Bumping `reload` (the refresh button) marks this node as changed, so
+        # ComfyUI re-executes just it (and downstream), re-reading the file.
+        return reload
+
+    def pick(self, directory, file, mode, reload=0):
         directory = os.path.expanduser(directory)
         path = os.path.join(directory, file)
         try:
