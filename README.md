@@ -6,7 +6,7 @@ Custom nodes for ComfyUI.
   Type a node title or group title into the "add name" box; each name gets its own
   native toggle widget. Flipping a switch bypasses every node and group whose title
   matches that name across the current workflow (mode 4) or re-enables them (mode 0).
-  Matches by user-defined title/nickname, case-insensitive substring. An "include
+  Matches by user-defined title/nickname, case-sensitive exact match. An "include
   subgraphs" toggle (default on) controls whether subgraph-internal nodes are matched.
   Remove a row via the right-click "Remove row" submenu.
 - Global Set/Get: a frontend control node (web/global_setget.js) with an "enable

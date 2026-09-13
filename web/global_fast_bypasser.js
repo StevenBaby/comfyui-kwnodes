@@ -32,9 +32,7 @@ function groupTitle(group) {
 }
 
 function matchByName(name, graph, includeSubgraphs = false) {
-  const q = String(name || "")
-    .trim()
-    .toLowerCase();
+  const q = String(name || "").trim();
   if (!q) return { nodes: [], groups: [] };
   const nodes = [];
   const groups = [];
@@ -47,7 +45,7 @@ function matchByName(name, graph, includeSubgraphs = false) {
       if (!n) continue;
       if (seen.has(n)) continue;
       seen.add(n);
-      if (nodeTitle(n).toLowerCase().includes(q)) nodes.push(n);
+      if (nodeTitle(n) === q) nodes.push(n);
       if (
         descend &&
         typeof n.isSubgraphNode === "function" &&
@@ -63,7 +61,7 @@ function matchByName(name, graph, includeSubgraphs = false) {
   const collect = (arr) => {
     if (!Array.isArray(arr)) return;
     for (const g of arr) {
-      if (g && groupTitle(g).toLowerCase().includes(q)) groups.push(g);
+      if (g && groupTitle(g) === q) groups.push(g);
     }
   };
   collect(graph?._groups);
