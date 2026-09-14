@@ -217,61 +217,48 @@ app.registerExtension({
         custom.callback = (value) => this._refreshFiles(value);
       }
 
-      // Add a refresh button: re-scan the directory's file list AND bump the
-      // `reload` hidden value so ComfyUI marks THIS node as changed and re-runs
-      // just it (re-reading the possibly-edited file), not the whole workflow.
-      const dirW = this.widgets?.find((w) => w.name === "directory");
-      if (dirW) {
-        const refreshBtn = this.addWidget(
-          "button",
-          "refresh",
-          "↻ Refresh",
-          () => {
-            this._refreshFiles(dirW.value);
-            const reloadWidget = this.widgets?.find((w) => w.name === "reload");
-            if (reloadWidget) {
-              reloadWidget.value = (reloadWidget.value ?? 0) + 1;
-              reloadWidget.callback?.(reloadWidget.value);
-            }
-          },
-          { serialize: false },
-        );
-        refreshBtn.label = "↻ Refresh";
-      }
-
-      // Editable text area showing the current file content, plus a Save button
-      // that writes the edit back to the file. Also hook the file dropdown so
-      // selecting a file loads its content immediately.
+      // Editable text area showing the current file content, plus Save + Refresh
+      // buttons (in one row). Also hook the file dropdown so selecting a file
+      // loads its content immediately.
       this._setupEditor();
+
+      // Give the node a taller default height so the textarea has room.
+      const sz = this.size || [0, 0];
+      if (sz[1] < 320) {
+        this.setSize?.([sz[0] || 320, 320]);
+      }
 
       const fileW = this.widgets?.find((w) => w.name === "file");
       if (fileW) {
+        const node = this;
         const origCb = fileW.callback;
         fileW.callback = function (value) {
           origCb?.call(this, value);
-          nodeType.prototype._loadContent?.call(this, value);
+          node._loadContent();
         };
       }
+
+      // Clean up the file-watch interval when the node is removed.
+      const onRemoved = this.onRemoved;
+      this.onRemoved = function () {
+        onRemoved?.apply(this, arguments);
+        this._fileWatchCleanup?.();
+      };
       return r;
     };
 
     nodeType.prototype._setupEditor = function () {
       const node = this;
 
-      // Editable textarea widget.
+      // Editable textarea widget (below the buttons).
       const editorEl = document.createElement("textarea");
-      editorEl.rows = 8;
       editorEl.style.width = "100%";
+      editorEl.style.height = "160px";
       editorEl.style.resize = "vertical";
       editorEl.style.boxSizing = "border-box";
       editorEl.style.fontFamily = "monospace";
       editorEl.style.fontSize = "11px";
       editorEl.placeholder = "Select a file to load its content...";
-      const editorWidget = this.addDOMWidget("editor", "textarea", editorEl, {
-        serialize: false,
-        getMinHeight: () => 120,
-        getMaxHeight: () => 400,
-      });
       node._editorEl = editorEl;
 
       // Fill the editor with the node's output after execution.
@@ -284,7 +271,25 @@ app.registerExtension({
         }
       };
 
-      // Save button: write the editor content back to the selected file.
+      // Refresh button (re-scan file list + bump reload to mark node changed).
+      const refreshBtn = this.addWidget(
+        "button",
+        "refresh",
+        "↻ Refresh",
+        () => {
+          const dirW = node.widgets?.find((w) => w.name === "directory");
+          if (dirW) node._refreshFiles(dirW.value);
+          const reloadWidget = node.widgets?.find((w) => w.name === "reload");
+          if (reloadWidget) {
+            reloadWidget.value = (reloadWidget.value ?? 0) + 1;
+            reloadWidget.callback?.(reloadWidget.value);
+          }
+        },
+        { serialize: false },
+      );
+      refreshBtn.label = "↻ Refresh";
+
+      // Save button (write editor content back to the file).
       const saveBtn = this.addWidget(
         "button",
         "save",
@@ -312,6 +317,32 @@ app.registerExtension({
         { serialize: false },
       );
       saveBtn.label = "💾 Save";
+
+      // Textarea (added last, so it sits below the buttons). Fill the rest of
+      // the node's height by recomputing on every resize.
+      const editorWidget = this.addDOMWidget("editor", "textarea", editorEl, {
+        serialize: false,
+        getMinHeight: () => 120,
+        getMaxHeight: () => 800,
+      });
+
+      const resizeEditor = () => {
+        const size = node.size || [0, 0];
+        const nodeH = size[1] || 0;
+        // Approximate the height consumed by everything above the textarea:
+        // title (~30px) + 5 widget rows (~26px each) + padding.
+        const aboveH = 30 + 5 * 26 + 8;
+        const target = Math.max(120, nodeH - aboveH);
+        editorEl.style.height = target + "px";
+      };
+      node._resizeEditor = resizeEditor;
+      const origResize = node.onResize;
+      node.onResize = function (size) {
+        origResize?.call(this, size);
+        resizeEditor();
+      };
+      // Initial sizing after the node is laid out.
+      setTimeout(resizeEditor, 0);
 
       // Auto-write back when the workflow is saved / queued (graphToPrompt).
       node._writeBack = async () => {
@@ -348,11 +379,11 @@ app.registerExtension({
         try {
           const url = api.apiURL(
             "/kwnodes/read_prompt_file?" +
-              new URLSearchParams({
-                directory: dirW.value,
-                file: fileW.value,
-                mode,
-              }),
+            new URLSearchParams({
+              directory: dirW.value,
+              file: fileW.value,
+              mode,
+            }),
           );
           const resp = await fetch(url);
           const data = await resp.json();
@@ -363,6 +394,20 @@ app.registerExtension({
           /* ignore */
         }
       };
+
+      // Fallback: poll the file widget's value; if it changes, reload content.
+      // ComfyUI's combo callback is unreliable across frontend versions, so this
+      // guarantees the editor follows the selected file.
+      let lastFile = null;
+      node._fileWatch = setInterval(() => {
+        const fileW = node.widgets?.find((w) => w.name === "file");
+        const cur = fileW?.value ?? null;
+        if (cur !== lastFile) {
+          lastFile = cur;
+          node._loadContent();
+        }
+      }, 300);
+      node._fileWatchCleanup = () => clearInterval(node._fileWatch);
     };
 
     nodeType.prototype._refreshFiles = async function (directory) {
