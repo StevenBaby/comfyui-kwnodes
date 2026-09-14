@@ -60,6 +60,29 @@ class PromptFilePicker:
             return text
         return "\n".join(b.strip("\n") for b in blocks)
 
+    @staticmethod
+    def _replace_fenced(text, new_content):
+        """Replace the content of ``` fenced blocks in `text` with `new_content`,
+        preserving everything outside the fences. If there is exactly one block,
+        swap its body; with multiple blocks, split new_content across them."""
+        blocks = re.findall(r"```[^\n]*\n(.*?)```", text, flags=re.DOTALL)
+        if not blocks:
+            return new_content
+        if len(blocks) == 1:
+            return re.sub(
+                r"```[^\n]*\n(.*?)```",
+                "```\n" + new_content.strip("\n") + "\n```",
+                text,
+                count=1,
+                flags=re.DOTALL,
+            )
+        # Multiple blocks: replace them sequentially with split content.
+        parts = new_content.split("\n\n")
+        def repl(m):
+            nonlocal parts
+            return "```\n" + (parts.pop(0) if parts else "") + "\n```"
+        return re.sub(r"```[^\n]*\n(.*?)```", repl, text, count=len(blocks), flags=re.DOTALL)
+
     @classmethod
     def VALIDATE_INPUTS(cls, directory, file, mode):
         files = cls._list_files_abs(os.path.expanduser(directory))

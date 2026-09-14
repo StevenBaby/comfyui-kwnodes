@@ -119,6 +119,29 @@ function pathSearchBox(event, pos, node) {
 app.registerExtension({
   name: "kwnodes.PromptFilePicker",
 
+  // Hook graph serialization so edited prompt text is written back to its file
+  // when the workflow is saved or queued.
+  setup() {
+    const originalGraphToPrompt = app.graphToPrompt?.bind(app);
+    if (originalGraphToPrompt) {
+      app.graphToPrompt = async function (...args) {
+        const result = await originalGraphToPrompt(...args);
+        // Write back any dirty editors.
+        const nodes = app.graph?._nodes || [];
+        for (const n of nodes) {
+          if (n.type === NODE_TYPE && n._writeBackBound) {
+            try {
+              await n._writeBackBound();
+            } catch (_) {
+              /* ignore */
+            }
+          }
+        }
+        return result;
+      };
+    }
+  },
+
   // Register the KWNODES_PATH widget type via getCustomWidgets (VHS-style).
   async getCustomWidgets() {
     return {
@@ -215,7 +238,131 @@ app.registerExtension({
         );
         refreshBtn.label = "↻ Refresh";
       }
+
+      // Editable text area showing the current file content, plus a Save button
+      // that writes the edit back to the file. Also hook the file dropdown so
+      // selecting a file loads its content immediately.
+      this._setupEditor();
+
+      const fileW = this.widgets?.find((w) => w.name === "file");
+      if (fileW) {
+        const origCb = fileW.callback;
+        fileW.callback = function (value) {
+          origCb?.call(this, value);
+          nodeType.prototype._loadContent?.call(this, value);
+        };
+      }
       return r;
+    };
+
+    nodeType.prototype._setupEditor = function () {
+      const node = this;
+
+      // Editable textarea widget.
+      const editorEl = document.createElement("textarea");
+      editorEl.rows = 8;
+      editorEl.style.width = "100%";
+      editorEl.style.resize = "vertical";
+      editorEl.style.boxSizing = "border-box";
+      editorEl.style.fontFamily = "monospace";
+      editorEl.style.fontSize = "11px";
+      editorEl.placeholder = "Select a file to load its content...";
+      const editorWidget = this.addDOMWidget("editor", "textarea", editorEl, {
+        serialize: false,
+        getMinHeight: () => 120,
+        getMaxHeight: () => 400,
+      });
+      node._editorEl = editorEl;
+
+      // Fill the editor with the node's output after execution.
+      const onExecuted = this.onExecuted;
+      this.onExecuted = function (msg) {
+        onExecuted?.apply(this, arguments);
+        const text = msg?.text?.[0];
+        if (text != null) {
+          editorEl.value = text;
+        }
+      };
+
+      // Save button: write the editor content back to the selected file.
+      const saveBtn = this.addWidget(
+        "button",
+        "save",
+        "💾 Save",
+        async () => {
+          const dirW = node.widgets?.find((w) => w.name === "directory");
+          const fileW = node.widgets?.find((w) => w.name === "file");
+          const modeW = node.widgets?.find((w) => w.name === "mode");
+          if (!dirW || !fileW || fileW.value === "(no prompt files)") return;
+          const body = new URLSearchParams({
+            directory: dirW.value,
+            file: fileW.value,
+            mode: modeW?.value ?? "fenced",
+            content: editorEl.value,
+          });
+          try {
+            await api.fetchApi("/kwnodes/save_prompt_file", {
+              method: "POST",
+              body,
+            });
+          } catch (_) {
+            /* ignore */
+          }
+        },
+        { serialize: false },
+      );
+      saveBtn.label = "💾 Save";
+
+      // Auto-write back when the workflow is saved / queued (graphToPrompt).
+      node._writeBack = async () => {
+        const dirW = node.widgets?.find((w) => w.name === "directory");
+        const fileW = node.widgets?.find((w) => w.name === "file");
+        const modeW = node.widgets?.find((w) => w.name === "mode");
+        if (!dirW || !fileW || fileW.value === "(no prompt files)") return;
+        if (!editorEl.value) return;
+        try {
+          await api.fetchApi("/kwnodes/save_prompt_file", {
+            method: "POST",
+            body: new URLSearchParams({
+              directory: dirW.value,
+              file: fileW.value,
+              mode: modeW?.value ?? "fenced",
+              content: editorEl.value,
+            }),
+          });
+        } catch (_) {
+          /* ignore */
+        }
+      };
+      node._writeBackBound = node._writeBack.bind(node);
+
+      // Load the selected file's content into the editor immediately.
+      node._loadContent = async function () {
+        const dirW = this.widgets?.find((w) => w.name === "directory");
+        const fileW = this.widgets?.find((w) => w.name === "file");
+        const modeW = this.widgets?.find((w) => w.name === "mode");
+        if (!dirW || !fileW || !fileW.value || fileW.value === "(no prompt files)") {
+          return;
+        }
+        const mode = modeW?.value ?? "fenced";
+        try {
+          const url = api.apiURL(
+            "/kwnodes/read_prompt_file?" +
+              new URLSearchParams({
+                directory: dirW.value,
+                file: fileW.value,
+                mode,
+              }),
+          );
+          const resp = await fetch(url);
+          const data = await resp.json();
+          if (data && data.content != null) {
+            this._editorEl.value = data.content;
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      };
     };
 
     nodeType.prototype._refreshFiles = async function (directory) {
@@ -237,6 +384,8 @@ app.registerExtension({
       } catch (_) {
         /* ignore */
       }
+      // Load the (possibly new) selected file's content into the editor.
+      this._loadContent?.();
     };
   },
 });
