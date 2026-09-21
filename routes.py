@@ -5,18 +5,51 @@ from aiohttp import web
 from server import PromptServer
 
 from .prompt_file_picker import PromptFilePicker
+from .load_image import LoadImagePath, ROOT, _is_within
 
 
 @PromptServer.instance.routes.get("/kwnodes/getpath")
 async def get_path(request):
     """Return subdirectory names (with trailing '/') directly under a path, for the
-    prompt picker's inline directory dropdown. Lists only ONE level."""
+    prompt picker's inline directory dropdown. Lists only ONE level, confined to
+    the project root (no escaping upward)."""
     query = request.rel_url.query
     if "path" not in query:
         return web.Response(status=204)
 
     path = os.path.abspath(os.path.expanduser(query["path"]))
+    # Clamp to the project root: anything above it resolves to the root itself.
+    if not _is_within(path, ROOT):
+        path = ROOT
     if not os.path.exists(path) or not os.path.isdir(path):
+        return web.json_response([])
+
+    items = []
+    try:
+        for item in os.scandir(path):
+            try:
+                if item.is_dir():
+                    items.append(item.name + "/")
+            except OSError:
+                pass
+    except OSError:
+        return web.json_response([])
+    items.sort()
+    return web.json_response(items)
+
+
+@PromptServer.instance.routes.get("/kwnodes/getpath_image")
+async def get_path_image(request):
+    """Like getpath, but the `path` is ROOT-relative (the Load Image node stores a
+    relative directory). Join to ROOT and list one level of subdirectories."""
+    from .load_image import _abs
+
+    query = request.rel_url.query
+    if "path" not in query:
+        return web.Response(status=204)
+
+    path = _abs(query["path"])
+    if not os.path.isdir(path):
         return web.json_response([])
 
     items = []
@@ -43,6 +76,46 @@ async def list_prompt_files(request):
         return web.json_response({"files": files})
     except OSError as e:
         return web.json_response({"files": [], "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.get("/kwnodes/list_image_files")
+async def list_image_files(request):
+    """Return the image files in an absolute directory (recursively when sub=1)."""
+    directory = request.query.get("directory", "")
+    directory = os.path.expanduser(directory)
+    sub = request.query.get("sub", "1") in ("1", "true", "True")
+    try:
+        files = LoadImagePath._list_images_abs(directory, sub)
+        return web.json_response({"files": files})
+    except OSError as e:
+        return web.json_response({"files": [], "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.get("/kwnodes/preview_image")
+async def preview_image(request):
+    """Return the bytes of an image so the frontend <img> can show a thumbnail."""
+    directory = os.path.expanduser(request.query.get("directory", ""))
+    file = request.query.get("file", "")
+    if not file:
+        return web.Response(status=400)
+    path = os.path.join(directory, file)
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError as e:
+        return web.Response(text=str(e), status=500)
+    ext = os.path.splitext(file)[1].lower().lstrip(".")
+    ctype = {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "webp": "image/webp",
+        "gif": "image/gif",
+        "bmp": "image/bmp",
+        "tiff": "image/tiff",
+        "tif": "image/tiff",
+    }.get(ext, "application/octet-stream")
+    return web.Response(body=data, content_type=ctype)
 
 
 @PromptServer.instance.routes.post("/kwnodes/save_prompt_file")
