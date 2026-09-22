@@ -247,26 +247,71 @@ app.registerExtension({
       return r;
     };
 
-    // Image preview below the widgets: an <img> that follows the selected file.
+    // Image preview below the widgets: an <img> that follows the selected file,
+    // with the node's background color and a "width x height" label.
     nodeType.prototype._setupPreview = function () {
       const node = this;
 
       const imgEl = document.createElement("img");
-      imgEl.style.width = "100%";
+      imgEl.style.maxWidth = "100%";
+      imgEl.style.maxHeight = "100%";
+      imgEl.style.width = "auto";
+      imgEl.style.height = "auto";
       imgEl.style.objectFit = "contain";
-      imgEl.style.background = "#111";
-      imgEl.style.borderRadius = "4px";
+      imgEl.style.background = "transparent";
+      imgEl.style.borderRadius = "0";
       imgEl.style.display = "block";
+      imgEl.style.margin = "0";
       imgEl.style.imageRendering = "pixelated";
       imgEl.alt = "";
       node._previewEl = imgEl;
 
-      const previewWidget = this.addDOMWidget("preview", "img", imgEl, {
+      // Width × Height label shown below the image.
+      const sizeEl = document.createElement("div");
+      sizeEl.style.width = "100%";
+      sizeEl.style.textAlign = "center";
+      sizeEl.style.fontSize = "11px";
+      sizeEl.style.color = "var(--p-text-muted, #999)";
+      sizeEl.style.paddingBottom = "10px";
+      sizeEl.style.margin = "0";
+      sizeEl.style.display = "none";
+      node._previewSizeEl = sizeEl;
+
+      const container = document.createElement("div");
+      container.style.width = "100%";
+      container.style.boxSizing = "border-box";
+      container.style.display = "flex";
+      container.style.flexDirection = "column";
+      container.style.alignItems = "center";
+      container.style.justifyContent = "center";
+      container.style.overflow = "hidden";
+      container.style.margin = "0";
+      container.appendChild(imgEl);
+      container.appendChild(sizeEl);
+      node._previewContainer = container;
+
+      // The DOM widget has NO getMaxHeight — a fixed max height is what locks
+      // the node's resize handle. Only a min height is set; the container's own
+      // CSS max-height (updated in onResize) caps the image so it stays in-bounds.
+      const previewWidget = this.addDOMWidget("preview", "div", container, {
         serialize: false,
-        margin: 0,
-        getMinHeight: () => 120,
-        getMaxHeight: () => 600,
+        margin: 5,
+        getMinHeight: () => 80,
       });
+
+      // Cap the preview to the node's available space (below the widgets, minus
+      // a bottom gutter) so the image never covers the resize handle.
+      const resizePreview = () => {
+        const availH = Math.max(80, (node.size?.[1] || 300) - 140);
+        container.style.maxHeight = availH + "px";
+        node.setDirtyCanvas?.(true, true);
+      };
+      const origResize = node.onResize;
+      node.onResize = function (size) {
+        origResize?.call(this, size);
+        resizePreview();
+      };
+      setTimeout(resizePreview, 0);
 
       const updatePreview = async () => {
         const dirW = node.widgets?.find((w) => w.name === "directory");
@@ -274,6 +319,8 @@ app.registerExtension({
         const hide = () => {
           imgEl.src = "";
           imgEl.style.display = "none";
+          sizeEl.style.display = "none";
+          sizeEl.innerText = "";
         };
         if (!dirW || !fileW || !fileW.value || fileW.value === "(no images)") {
           hide();
@@ -289,7 +336,6 @@ app.registerExtension({
             hide();
             return;
           }
-          // File exists: show it via an object URL (no second request).
           const blob = await resp.blob();
           if (blob.size === 0) {
             hide();
@@ -297,6 +343,10 @@ app.registerExtension({
           }
           if (imgEl._objectUrl) URL.revokeObjectURL(imgEl._objectUrl);
           imgEl._objectUrl = URL.createObjectURL(blob);
+          imgEl.onload = () => {
+            sizeEl.innerText = `${imgEl.naturalWidth} × ${imgEl.naturalHeight}`;
+            sizeEl.style.display = "block";
+          };
           imgEl.src = imgEl._objectUrl;
           imgEl.style.display = "block";
         } catch (_) {
