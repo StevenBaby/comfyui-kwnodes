@@ -1,10 +1,11 @@
 """Prompt picker node — scan a directory for .md/.txt prompt files and output the
-selected file's text as a STRING."""
+selected file's text as a STRING. The directory is ROOT-relative (confined to the
+project root); an optional `sub` toggle lists files in subdirectories."""
 
 import os
 import re
 
-PROMPTS_ROOT = os.path.expanduser("~/source/comfyui/prompts")
+from .load_image import ROOT, _abs
 
 
 class PromptFilePicker:
@@ -17,12 +18,21 @@ class PromptFilePicker:
                 "directory": (
                     "STRING",
                     {
-                        "default": PROMPTS_ROOT,
+                        "default": "prompts",
                         "multiline": False,
                     },
                 ),
-                "file": (cls._list_files_abs(PROMPTS_ROOT),),
+                "sub": ("BOOLEAN", {"default": True}),
+                "file": (cls._list_files_abs("prompts", True),),
                 "mode": (["raw", "fenced"], {"default": "fenced"}),
+                "editor": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "dynamicPrompts": False,
+                    },
+                ),
             },
             "hidden": {
                 "reload": ("INT", {"default": 0, "min": 0, "max": 2**31 - 1}),
@@ -34,22 +44,52 @@ class PromptFilePicker:
     FUNCTION = "pick"
     CATEGORY = "kwnodes"
     DESCRIPTION = (
-        "Pick a prompt directory (absolute path, inline autocomplete from /) and a "
-        ".md/.txt file inside it; output the file's text as a STRING. mode 'raw' = "
-        "the whole file; mode 'fenced' = only the ``` fenced prompt body."
+        "Pick a prompt directory (ROOT-relative, inline autocomplete) and a "
+        ".md/.txt file inside it; output the file's text as a STRING. mode "
+        "'raw' = the whole file; mode 'fenced' = only the ``` fenced prompt "
+        "body. With 'sub' on (default), files in subdirectories are listed too, "
+        "named relative to the directory. Newest files first."
     )
 
     @staticmethod
-    def _list_files_abs(directory):
-        try:
-            entries = sorted(
-                e
-                for e in os.listdir(directory)
-                if e.lower().endswith((".md", ".txt"))
-                and os.path.isfile(os.path.join(directory, e))
-            )
-        except OSError:
-            entries = []
+    def _list_files_abs(directory, sub=True):
+        """Return .md/.txt files under `directory` (ROOT-relative), newest first.
+        With `sub`, walk subdirectories and prefix names with the subpath."""
+        directory = _abs(directory)
+
+        if not sub:
+            try:
+                entries = [
+                    e
+                    for e in os.listdir(directory)
+                    if e.lower().endswith((".md", ".txt"))
+                    and os.path.isfile(os.path.join(directory, e))
+                ]
+            except OSError:
+                return ["(no prompt files)"]
+            return PromptFilePicker._sort_by_mtime(directory, entries)
+
+        found = []  # (relpath, abspath)
+        for root, dirs, files in os.walk(directory):
+            dirs.sort()
+            for f in files:
+                if not f.lower().endswith((".md", ".txt")):
+                    continue
+                full = os.path.join(root, f)
+                rel = os.path.relpath(full, directory)
+                found.append((rel, full))
+        if not found:
+            return ["(no prompt files)"]
+        found.sort(key=lambda x: os.path.getmtime(x[1]), reverse=True)
+        return [rel for rel, _ in found]
+
+    @staticmethod
+    def _sort_by_mtime(directory, entries):
+        entries = list(entries)
+        entries.sort(
+            key=lambda e: os.path.getmtime(os.path.join(directory, e)),
+            reverse=True,
+        )
         return entries if entries else ["(no prompt files)"]
 
     @staticmethod
@@ -84,20 +124,24 @@ class PromptFilePicker:
         return re.sub(r"```[^\n]*\n(.*?)```", repl, text, count=len(blocks), flags=re.DOTALL)
 
     @classmethod
-    def VALIDATE_INPUTS(cls, directory, file, mode):
-        files = cls._list_files_abs(os.path.expanduser(directory))
+    def VALIDATE_INPUTS(cls, directory, sub, file, mode, editor=""):
+        files = cls._list_files_abs(directory, sub)
         if file not in files and file != "(no prompt files)":
             return [f"file '{file}' not found in {directory}"]
         return True
 
     @classmethod
-    def IS_CHANGED(cls, directory, file, mode, reload):
-        # Bumping `reload` (the refresh button) marks this node as changed, so
-        # ComfyUI re-executes just it (and downstream), re-reading the file.
-        return reload
+    def IS_CHANGED(cls, directory, sub, file, mode, editor=""):
+        # mtime of the resolved file: re-reads when the file changes on disk.
+        directory = _abs(directory)
+        path = os.path.join(directory, file)
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return float("NaN")
 
-    def pick(self, directory, file, mode, reload=0):
-        directory = os.path.expanduser(directory)
+    def pick(self, directory, sub, file, mode, editor="", reload=0):
+        directory = _abs(directory)
         path = os.path.join(directory, file)
         try:
             with open(path, "r", encoding="utf-8") as f:

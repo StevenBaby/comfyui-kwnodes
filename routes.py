@@ -68,11 +68,11 @@ async def get_path_image(request):
 
 @PromptServer.instance.routes.get("/kwnodes/list_prompt_files")
 async def list_prompt_files(request):
-    """Return the .md/.txt files in an absolute directory."""
+    """Return the .md/.txt files in a ROOT-relative directory (recursively when sub=1)."""
     directory = request.query.get("directory", "")
-    directory = os.path.expanduser(directory)
+    sub = request.query.get("sub", "1") in ("1", "true", "True")
     try:
-        files = PromptFilePicker._list_files_abs(directory)
+        files = PromptFilePicker._list_files_abs(directory, sub)
         return web.json_response({"files": files})
     except OSError as e:
         return web.json_response({"files": [], "error": str(e)}, status=500)
@@ -121,8 +121,10 @@ async def preview_image(request):
 @PromptServer.instance.routes.post("/kwnodes/save_prompt_file")
 async def save_prompt_file(request):
     """Write the edited prompt text back to its file (mode-aware)."""
+    from .load_image import _abs
+
     post = await request.post()
-    directory = os.path.expanduser(post.get("directory", ""))
+    directory = _abs(post.get("directory", ""))
     file = post.get("file", "")
     content = post.get("content", "")
     mode = post.get("mode", "fenced")
@@ -147,7 +149,9 @@ async def save_prompt_file(request):
 @PromptServer.instance.routes.get("/kwnodes/read_prompt_file")
 async def read_prompt_file(request):
     """Return the content of a prompt file (mode-aware: raw = full, fenced = body)."""
-    directory = os.path.expanduser(request.query.get("directory", ""))
+    from .load_image import _abs
+
+    directory = _abs(request.query.get("directory", ""))
     file = request.query.get("file", "")
     mode = request.query.get("mode", "fenced")
     if not file:

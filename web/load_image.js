@@ -263,6 +263,7 @@ app.registerExtension({
 
       const previewWidget = this.addDOMWidget("preview", "img", imgEl, {
         serialize: false,
+        margin: 0,
         getMinHeight: () => 120,
         getMaxHeight: () => 600,
       });

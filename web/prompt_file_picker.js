@@ -55,7 +55,7 @@ function pathSearchBox(event, pos, node) {
     if (lastPath !== path) {
       try {
         const url = api.apiURL(
-          "/kwnodes/getpath?" + new URLSearchParams({ path }),
+          "/kwnodes/getpath_image?" + new URLSearchParams({ path }),
         );
         const resp = await fetch(url);
         options = (await resp.json()) || [];
@@ -218,15 +218,9 @@ app.registerExtension({
       }
 
       // Editable text area showing the current file content, plus Save + Refresh
-      // buttons (in one row). Also hook the file dropdown so selecting a file
-      // loads its content immediately.
+      // buttons. Also hook the file dropdown so selecting a file loads its
+      // content immediately. The `editor` multiline widget auto-sizes the node.
       this._setupEditor();
-
-      // Give the node a taller default height so the textarea has room.
-      const sz = this.size || [0, 0];
-      if (sz[1] < 320) {
-        this.setSize?.([sz[0] || 320, 320]);
-      }
 
       const fileW = this.widgets?.find((w) => w.name === "file");
       if (fileW) {
@@ -235,6 +229,18 @@ app.registerExtension({
         fileW.callback = function (value) {
           origCb?.call(this, value);
           node._loadContent();
+        };
+      }
+
+      // Toggling `sub` re-scans the file list (recursive vs flat).
+      const subW = this.widgets?.find((w) => w.name === "sub");
+      if (subW) {
+        subW.label = "include sub directory";
+        const origSubCb = subW.callback;
+        subW.callback = function (value) {
+          origSubCb?.call(this, value);
+          const dirW = this.widgets?.find((w) => w.name === "directory");
+          if (dirW) this._refreshFiles(dirW.value);
         };
       }
 
@@ -258,16 +264,11 @@ app.registerExtension({
     nodeType.prototype._setupEditor = function () {
       const node = this;
 
-      // Editable textarea widget (below the buttons).
-      const editorEl = document.createElement("textarea");
-      editorEl.style.width = "100%";
-      editorEl.style.height = "160px";
-      editorEl.style.resize = "vertical";
-      editorEl.style.boxSizing = "border-box";
-      editorEl.style.fontFamily = "monospace";
-      editorEl.style.fontSize = "11px";
-      editorEl.placeholder = "Select a file to load its content...";
-      node._editorEl = editorEl;
+      // The `editor` input is a native multiline STRING widget (declared in
+      // INPUT_TYPES with {"multiline": True}), so ComfyUI renders it as a proper
+      // textarea with correct styling — no hand-rolled DOM widget.
+      const editorWidget = this.widgets?.find((w) => w.name === "editor");
+      if (!editorWidget) return;
 
       // Fill the editor with the node's output after execution.
       const onExecuted = this.onExecuted;
@@ -275,7 +276,7 @@ app.registerExtension({
         onExecuted?.apply(this, arguments);
         const text = msg?.text?.[0];
         if (text != null) {
-          editorEl.value = text;
+          editorWidget.value = text;
         }
       };
 
@@ -311,7 +312,7 @@ app.registerExtension({
             directory: dirW.value,
             file: fileW.value,
             mode: modeW?.value ?? "fenced",
-            content: editorEl.value,
+            content: editorWidget.value,
           });
           try {
             await api.fetchApi("/kwnodes/save_prompt_file", {
@@ -326,31 +327,18 @@ app.registerExtension({
       );
       saveBtn.label = "💾 Save";
 
-      // Textarea (added last, so it sits below the buttons). Fill the rest of
-      // the node's height by recomputing on every resize.
-      const editorWidget = this.addDOMWidget("editor", "textarea", editorEl, {
-        serialize: false,
-        getMinHeight: () => 120,
-        getMaxHeight: () => 800,
-      });
-
-      const resizeEditor = () => {
-        const size = node.size || [0, 0];
-        const nodeH = size[1] || 0;
-        // Approximate the height consumed by everything above the textarea:
-        // title (~30px) + 5 widget rows (~26px each) + padding.
-        const aboveH = 30 + 5 * 26 + 8;
-        const target = Math.max(120, nodeH - aboveH);
-        editorEl.style.height = target + "px";
-      };
-      node._resizeEditor = resizeEditor;
-      const origResize = node.onResize;
-      node.onResize = function (size) {
-        origResize?.call(this, size);
-        resizeEditor();
-      };
-      // Initial sizing after the node is laid out.
-      setTimeout(resizeEditor, 0);
+      // Move the refresh/save buttons above the editor textarea. Widget order =
+      // display order, and the `editor` widget was created before these buttons
+      // (it's a required input). Reorder: [directory, sub, file, mode,
+      // refresh, save, editor].
+      const btns = [refreshBtn, saveBtn];
+      node.widgets = node.widgets.filter((w) => !btns.includes(w));
+      const insertAt = node.widgets.indexOf(editorWidget);
+      if (insertAt >= 0) {
+        node.widgets.splice(insertAt, 0, ...btns);
+      } else {
+        node.widgets.push(...btns);
+      }
 
       // Auto-write back when the workflow is saved / queued (graphToPrompt).
       node._writeBack = async () => {
@@ -358,7 +346,7 @@ app.registerExtension({
         const fileW = node.widgets?.find((w) => w.name === "file");
         const modeW = node.widgets?.find((w) => w.name === "mode");
         if (!dirW || !fileW || fileW.value === "(no prompt files)") return;
-        if (!editorEl.value) return;
+        if (!editorWidget.value) return;
         try {
           await api.fetchApi("/kwnodes/save_prompt_file", {
             method: "POST",
@@ -366,7 +354,7 @@ app.registerExtension({
               directory: dirW.value,
               file: fileW.value,
               mode: modeW?.value ?? "fenced",
-              content: editorEl.value,
+              content: editorWidget.value,
             }),
           });
         } catch (_) {
@@ -380,6 +368,7 @@ app.registerExtension({
         const dirW = this.widgets?.find((w) => w.name === "directory");
         const fileW = this.widgets?.find((w) => w.name === "file");
         const modeW = this.widgets?.find((w) => w.name === "mode");
+        const editorW = this.widgets?.find((w) => w.name === "editor");
         if (!dirW || !fileW || !fileW.value || fileW.value === "(no prompt files)") {
           return;
         }
@@ -395,8 +384,8 @@ app.registerExtension({
           );
           const resp = await fetch(url);
           const data = await resp.json();
-          if (data && data.content != null) {
-            this._editorEl.value = data.content;
+          if (data && data.content != null && editorW) {
+            editorW.value = data.content;
           }
         } catch (_) {
           /* ignore */
@@ -421,9 +410,12 @@ app.registerExtension({
     nodeType.prototype._refreshFiles = async function (directory) {
       const fileWidget = this.widgets?.find((w) => w.name === "file");
       if (!fileWidget || !directory) return;
+      const subW = this.widgets?.find((w) => w.name === "sub");
+      const sub = subW?.value ? 1 : 0;
       try {
         const url = api.apiURL(
-          "/kwnodes/list_prompt_files?" + new URLSearchParams({ directory }),
+          "/kwnodes/list_prompt_files?" +
+            new URLSearchParams({ directory, sub }),
         );
         const resp = await fetch(url);
         const data = await resp.json();
