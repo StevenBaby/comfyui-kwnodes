@@ -244,6 +244,14 @@ app.registerExtension({
         onRemoved?.apply(this, arguments);
         this._fileWatchCleanup?.();
       };
+
+      // Auto-refresh the file list once after the node is created (covers page
+      // load, when saved workflows are reconstructed).
+      const dirW0 = this.widgets?.find((w) => w.name === "directory");
+      if (dirW0) {
+        setTimeout(() => this._refreshFiles(dirW0.value), 0);
+      }
+
       return r;
     };
 

@@ -204,7 +204,7 @@ app.registerExtension({
         "↻ Refresh",
         () => {
           const dirW = this.widgets?.find((w) => w.name === "directory");
-          if (dirW) this._refreshFiles(dirW.value);
+          if (dirW) this._refreshFiles(dirW.value, true);
           const reloadWidget = this.widgets?.find((w) => w.name === "reload");
           if (reloadWidget) {
             reloadWidget.value = (reloadWidget.value ?? 0) + 1;
@@ -228,6 +228,13 @@ app.registerExtension({
       }
 
       this._setupPreview();
+
+      // Auto-refresh the file list once after the node is created (covers page
+      // load, when saved workflows are reconstructed).
+      const dirW0 = this.widgets?.find((w) => w.name === "directory");
+      if (dirW0) {
+        setTimeout(() => this._refreshFiles(dirW0.value), 0);
+      }
 
       // Clean up the preview poll interval when the node is removed.
       const onRemoved = this.onRemoved;
@@ -319,7 +326,7 @@ app.registerExtension({
       setTimeout(updatePreview, 0);
     };
 
-    nodeType.prototype._refreshFiles = async function (directory) {
+    nodeType.prototype._refreshFiles = async function (directory, selectLatest) {
       const fileWidget = this.widgets?.find((w) => w.name === "image");
       if (!fileWidget || !directory) return;
       const subW = this.widgets?.find((w) => w.name === "sub");
@@ -333,7 +340,12 @@ app.registerExtension({
         const data = await resp.json();
         if (data.files && data.files.length) {
           fileWidget.options.values = data.files;
-          if (!data.files.includes(fileWidget.value)) {
+          // On manual refresh, always jump to the newest file (files are sorted
+          // by mtime descending, so [0] is the latest). Otherwise keep the
+          // current selection if it still exists.
+          if (selectLatest) {
+            fileWidget.value = data.files[0];
+          } else if (!data.files.includes(fileWidget.value)) {
             fileWidget.value = data.files[0];
           }
           this.setDirtyCanvas?.(true, true);
