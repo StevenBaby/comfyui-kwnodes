@@ -104,10 +104,11 @@ class PromptFilePicker:
     def _replace_fenced(text, new_content):
         """Replace the content of ``` fenced blocks in `text` with `new_content`,
         preserving everything outside the fences. If there is exactly one block,
-        swap its body; with multiple blocks, split new_content across them."""
+        swap its body; with multiple blocks, split new_content across them. If
+        there are no fences at all, wrap new_content in a fresh ``` block."""
         blocks = re.findall(r"```[^\n]*\n(.*?)```", text, flags=re.DOTALL)
         if not blocks:
-            return new_content
+            return "```\n" + new_content.strip("\n") + "\n```\n"
         if len(blocks) == 1:
             return re.sub(
                 r"```[^\n]*\n(.*?)```",
@@ -150,7 +151,9 @@ class PromptFilePicker:
             raise ValueError(f"kwnodes PromptFilePicker: cannot read {path}: {e}")
         if mode == "fenced":
             text = self._extract_fenced(text)
-        return (text,)
+        # Strip comment lines (those starting with '#', ignoring leading space).
+        lines = [ln for ln in text.split("\n") if not ln.lstrip().startswith("#")]
+        return ("\n".join(lines),)
 
 
 NODE_CLASS_MAPPINGS = {

@@ -165,3 +165,25 @@ async def read_prompt_file(request):
         return web.json_response({"content": text})
     except OSError as e:
         return web.json_response({"content": "", "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.post("/kwnodes/new_prompt_file")
+async def new_prompt_file(request):
+    """Create a new, empty prompt file named prompt_<n>.md in the directory."""
+    from .load_image import _abs
+
+    post = await request.post()
+    directory = _abs(post.get("directory", ""))
+    try:
+        n = 1
+        while True:
+            name = f"prompt_{n}.md"
+            path = os.path.join(directory, name)
+            if not os.path.exists(path):
+                break
+            n += 1
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("")
+        return web.json_response({"ok": True, "file": name})
+    except OSError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)

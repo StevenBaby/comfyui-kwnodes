@@ -270,6 +270,42 @@ app.registerExtension({
       const editorWidget = this.widgets?.find((w) => w.name === "editor");
       if (!editorWidget) return;
 
+      // Ctrl+/ toggles a '#' comment on the current line. Find the textarea DOM
+      // the multiline widget rendered (element / legacy inputEl / node query).
+      const ta =
+        editorWidget.element ||
+        editorWidget.inputEl ||
+        editorWidget.element?.querySelector?.("textarea") ||
+        (editorWidget.element && editorWidget.element.tagName === "TEXTAREA"
+          ? editorWidget.element
+          : null);
+      if (ta && ta.tagName === "TEXTAREA") {
+        // Add a bit of space between the editor and the buttons above it.
+        ta.addEventListener("keydown", (e) => {
+          if (!(e.ctrlKey || e.metaKey) || e.key !== "/") return;
+          e.preventDefault();
+          const val = ta.value;
+          const start = ta.selectionStart;
+          const lineStart = val.lastIndexOf("\n", start - 1) + 1;
+          let lineEnd = val.indexOf("\n", start);
+          if (lineEnd === -1) lineEnd = val.length;
+          const line = val.slice(lineStart, lineEnd);
+          const leading = line.match(/^\s*/)[0];
+          const body = line.slice(leading.length);
+          let newLine;
+          if (body.startsWith("#")) {
+            newLine = leading + body.replace(/^#\s?/, "");
+          } else {
+            newLine = leading + "# " + body;
+          }
+          const newVal = val.slice(0, lineStart) + newLine + val.slice(lineEnd);
+          ta.value = newVal;
+          editorWidget.value = newVal;
+          const delta = newLine.length - line.length;
+          ta.selectionStart = ta.selectionEnd = start + delta;
+        });
+      }
+
       // Fill the editor with the node's output after execution.
       const onExecuted = this.onExecuted;
       this.onExecuted = function (msg) {
@@ -327,11 +363,39 @@ app.registerExtension({
       );
       saveBtn.label = "💾 Save";
 
-      // Move the refresh/save buttons above the editor textarea. Widget order =
-      // display order, and the `editor` widget was created before these buttons
-      // (it's a required input). Reorder: [directory, sub, file, mode,
-      // refresh, save, editor].
-      const btns = [refreshBtn, saveBtn];
+      // New button: create a new prompt_<n>.md file and select it.
+      const newBtn = this.addWidget(
+        "button",
+        "new",
+        "➕ New",
+        async () => {
+          const dirW = node.widgets?.find((w) => w.name === "directory");
+          if (!dirW) return;
+          try {
+            const resp = await api.fetchApi("/kwnodes/new_prompt_file", {
+              method: "POST",
+              body: new URLSearchParams({ directory: dirW.value }),
+            });
+            const data = await resp.json();
+            if (data && data.ok && data.file) {
+              const fileW = node.widgets?.find((w) => w.name === "file");
+              if (fileW) fileW.value = data.file;
+              await node._refreshFiles(dirW.value);
+              const fw = node.widgets?.find((w) => w.name === "file");
+              if (fw) fw.value = data.file;
+              if (editorWidget) editorWidget.value = "";
+              node._loadContent?.();
+            }
+          } catch (_) {
+            /* ignore */
+          }
+        },
+        { serialize: false },
+      );
+      newBtn.label = "➕ New";
+
+      // Move the refresh/new/save buttons above the editor textarea.
+      const btns = [refreshBtn, newBtn, saveBtn];
       node.widgets = node.widgets.filter((w) => !btns.includes(w));
       const insertAt = node.widgets.indexOf(editorWidget);
       if (insertAt >= 0) {
