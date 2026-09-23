@@ -280,29 +280,90 @@ app.registerExtension({
           ? editorWidget.element
           : null);
       if (ta && ta.tagName === "TEXTAREA") {
-        // Add a bit of space between the editor and the buttons above it.
         ta.addEventListener("keydown", (e) => {
           if (!(e.ctrlKey || e.metaKey) || e.key !== "/") return;
           e.preventDefault();
           const val = ta.value;
-          const start = ta.selectionStart;
-          const lineStart = val.lastIndexOf("\n", start - 1) + 1;
-          let lineEnd = val.indexOf("\n", start);
-          if (lineEnd === -1) lineEnd = val.length;
-          const line = val.slice(lineStart, lineEnd);
-          const leading = line.match(/^\s*/)[0];
-          const body = line.slice(leading.length);
-          let newLine;
-          if (body.startsWith("#")) {
-            newLine = leading + body.replace(/^#\s?/, "");
-          } else {
-            newLine = leading + "# " + body;
+          const origStart = ta.selectionStart;
+          const origEnd = ta.selectionEnd;
+          const hasSelection = origStart !== origEnd;
+
+          // Expand the SELECTION SPAN to whole lines for the comment operation,
+          // but keep origStart/origEnd to restore the exact character selection
+          // afterwards (shifted only by the added/removed '#' chars).
+          const selStart = val.lastIndexOf("\n", origStart - 1) + 1;
+          let selEnd = val.indexOf("\n", origEnd);
+          if (selEnd === -1) selEnd = val.length;
+          // A caret (no selection) still comments the whole line it sits on.
+          if (!hasSelection) {
+            let le = val.indexOf("\n", origEnd);
+            if (le === -1) le = val.length;
+            selEnd = le;
           }
-          const newVal = val.slice(0, lineStart) + newLine + val.slice(lineEnd);
+          const block = val.slice(selStart, selEnd);
+          const lines = block.split("\n");
+
+          // Toggle: if every non-empty line is already commented, uncomment all;
+          // otherwise comment all.
+          const nonEmpty = lines.filter((l) => l.trim() !== "");
+          const allCommented =
+            nonEmpty.length > 0 && nonEmpty.every((l) => l.trimStart().startsWith("#"));
+
+          const toggled = lines.map((l) => {
+            const leading = l.match(/^\s*/)[0];
+            const body = l.slice(leading.length);
+            if (allCommented) {
+              return leading + body.replace(/^#\s?/, "");
+            }
+            if (body === "") return l;
+            return leading + "# " + body;
+          });
+
+          const newBlock = toggled.join("\n");
+          const newVal = val.slice(0, selStart) + newBlock + val.slice(selEnd);
           ta.value = newVal;
           editorWidget.value = newVal;
-          const delta = newLine.length - line.length;
-          ta.selectionStart = ta.selectionEnd = start + delta;
+
+          // Restore the exact character selection, shifting each cursor by the
+          // net '#' insertion/removal that happened before it (per line).
+          const adjust = (pos) => {
+            if (pos < selStart) return pos;
+            if (pos > selEnd) return pos + (newBlock.length - block.length);
+
+            // Which line (index within the block) does `pos` fall in?
+            const before = val.slice(selStart, pos).split("\n").length - 1;
+            let origLineStart = selStart;
+            for (let i = 0; i < before; i++) {
+              origLineStart = val.indexOf("\n", origLineStart) + 1;
+            }
+            const origOffset = pos - origLineStart; // offset within the original line
+            const origLine = lines[before];
+            const newLine = toggled[before];
+            const leading = origLine.match(/^\s*/)[0];
+
+            // Offset before the '#' change (inside the leading whitespace) is
+            // unchanged; offset after it shifts by (newLine.length - origLine.length).
+            if (origOffset <= leading.length) {
+              return selStart + newLineStart(before) + origOffset;
+            }
+            return (
+              selStart +
+              newLineStart(before) +
+              origOffset +
+              (newLine.length - origLine.length)
+            );
+          };
+
+          const newLineStart = (n) => {
+            let s = 0;
+            for (let i = 0; i < n; i++) s += toggled[i].length + 1;
+            return s;
+          };
+
+          const newStart = adjust(origStart);
+          const newEnd = adjust(origEnd);
+          ta.selectionStart = newStart;
+          ta.selectionEnd = newEnd;
         });
       }
 
@@ -479,7 +540,7 @@ app.registerExtension({
       try {
         const url = api.apiURL(
           "/kwnodes/list_prompt_files?" +
-            new URLSearchParams({ directory, sub }),
+          new URLSearchParams({ directory, sub }),
         );
         const resp = await fetch(url);
         const data = await resp.json();
