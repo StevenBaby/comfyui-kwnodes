@@ -9,6 +9,8 @@ Custom nodes for ComfyUI. Currently provides:
   field has VHS-style path autocomplete; the file list refreshes on change.
 - "Load Image (Path)" (load_image.py) — load an image from an absolute path
   (VHS-style path autocomplete) and output it as IMAGE + MASK.
+- "Load Audio (Path)" (load_audio.py) — load an audio file from a path
+  (VHS-style path autocomplete) and output it as AUDIO.
 """
 
 import importlib
@@ -17,12 +19,14 @@ from .prompt_file_picker import NODE_CLASS_MAPPINGS as _PICKER_NODES
 from .prompt_file_picker import NODE_DISPLAY_NAME_MAPPINGS as _PICKER_NAMES
 from .load_image import NODE_CLASS_MAPPINGS as _IMAGE_NODES
 from .load_image import NODE_DISPLAY_NAME_MAPPINGS as _IMAGE_NAMES
+from .load_audio import NODE_CLASS_MAPPINGS as _AUDIO_NODES
+from .load_audio import NODE_DISPLAY_NAME_MAPPINGS as _AUDIO_NAMES
 
 WEB_DIRECTORY = "./web"
 
-NODE_CLASS_MAPPINGS = {**_PICKER_NODES, **_IMAGE_NODES}
+NODE_CLASS_MAPPINGS = {**_PICKER_NODES, **_IMAGE_NODES, **_AUDIO_NODES}
 
-NODE_DISPLAY_NAME_MAPPINGS = {**_PICKER_NAMES, **_IMAGE_NAMES}
+NODE_DISPLAY_NAME_MAPPINGS = {**_PICKER_NAMES, **_IMAGE_NAMES, **_AUDIO_NAMES}
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
 

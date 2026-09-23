@@ -6,6 +6,7 @@ from server import PromptServer
 
 from .prompt_file_picker import PromptFilePicker
 from .load_image import LoadImagePath, ROOT, _is_within
+from .load_audio import LoadAudioPath
 
 
 @PromptServer.instance.routes.get("/kwnodes/getpath")
@@ -187,3 +188,48 @@ async def new_prompt_file(request):
         return web.json_response({"ok": True, "file": name})
     except OSError as e:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.get("/kwnodes/list_audio_files")
+async def list_audio_files(request):
+    """Return the audio files in a ROOT-relative directory (recursively when sub=1)."""
+    directory = request.query.get("directory", "")
+    sub = request.query.get("sub", "1") in ("1", "true", "True")
+    try:
+        files = LoadAudioPath._list_audio_abs(directory, sub)
+        return web.json_response({"files": files})
+    except OSError as e:
+        return web.json_response({"files": [], "error": str(e)}, status=500)
+
+
+@PromptServer.instance.routes.get("/kwnodes/preview_audio")
+async def preview_audio(request):
+    """Return the bytes of an audio file so the frontend <audio> can play it."""
+    from .load_image import _abs
+
+    directory = _abs(request.query.get("directory", ""))
+    file = request.query.get("file", "")
+    if not file:
+        return web.Response(status=400)
+    path = os.path.join(directory, file)
+    if not _is_within(path, ROOT):
+        return web.Response(status=403)
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError as e:
+        return web.Response(text=str(e), status=500)
+    ext = os.path.splitext(file)[1].lower().lstrip(".")
+    ctype = {
+        "mp3": "audio/mpeg",
+        "wav": "audio/wav",
+        "flac": "audio/flac",
+        "ogg": "audio/ogg",
+        "m4a": "audio/mp4",
+        "aac": "audio/aac",
+        "opus": "audio/ogg",
+        "mp4": "video/mp4",
+        "webm": "video/webm",
+        "mkv": "video/x-matroska",
+    }.get(ext, "application/octet-stream")
+    return web.Response(body=data, content_type=ctype)
