@@ -26,6 +26,11 @@ Custom nodes for ComfyUI.
   lists images in subdirectories recursively, named relative to the directory. Newest
   files first; a live thumbnail preview shows the selected image (hidden when the file
   doesn't exist). The ↻ Refresh button re-scans and auto-selects the newest image.
+- **Load Audio (Path)**: load an audio file from a directory inside the project root
+  and output it as AUDIO (`{"waveform", "sample_rate"}`). Same VHS-style path
+  autocomplete and "include sub directory" recursion as Load Image (Path). A native
+  `<audio controls>` player below the node previews the selected file. Decodes via
+  `av`, so it also extracts the audio track from video files (`.mp4`, `.webm`, etc.).
 
 ## Global Fast Bypasser usage
 
@@ -68,8 +73,19 @@ Custom nodes for ComfyUI.
 5. The output IMAGE + MASK feeds downstream nodes (e.g. H3 reference images). Click
    ↻ Refresh to re-scan and auto-select the newest image.
 
+## Load Audio (Path) usage
+
+1. Add "Load Audio (Path)" from the `kwnodes` category.
+2. Click the `directory` field to pick a directory (default `input/audio`; ROOT-relative
+   path autocomplete, confined to the project root).
+3. Toggle "include sub directory" (default on) to also list audio in subdirectories.
+4. Pick an audio file; the `<audio controls>` player below previews it. The output AUDIO
+   feeds downstream audio nodes (e.g. VAE Encode Audio, or an H3 reference audio).
+5. Audio is decoded with `av`, so video files (`.mp4`, `.webm`, `.mkv`) also work —
+   their first audio track is extracted.
+
 ## Notes
 
 - These nodes are self-contained: the path autocomplete and file listing are
   implemented inside this pack (no VideoHelperSuite or other node dependency). Only
-  ComfyUI core + standard Python libs (`PIL`, `aiohttp`) are used.
+  ComfyUI core + standard Python libs (`PIL`, `aiohttp`, `av`) are used.
