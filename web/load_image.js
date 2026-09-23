@@ -247,85 +247,38 @@ app.registerExtension({
       return r;
     };
 
-    // Image preview below the widgets: an <img> that follows the selected file,
-    // with the node's background color and a "width x height" label.
+    // Image preview: instead of a hand-rolled <img> DOM widget, set node.imgs +
+    // previewMediaType='image' so ComfyUI's built-in image preview (with its
+    // "Edit or mask image" floating button + mask editor) takes over.
     nodeType.prototype._setupPreview = function () {
       const node = this;
-
-      const imgEl = document.createElement("img");
-      imgEl.style.maxWidth = "100%";
-      imgEl.style.maxHeight = "100%";
-      imgEl.style.width = "auto";
-      imgEl.style.height = "auto";
-      imgEl.style.objectFit = "contain";
-      imgEl.style.background = "transparent";
-      imgEl.style.borderRadius = "0";
-      imgEl.style.display = "block";
-      imgEl.style.margin = "0";
-      imgEl.style.imageRendering = "pixelated";
-      imgEl.alt = "";
-      node._previewEl = imgEl;
-
-      // Width × Height label shown below the image.
-      const sizeEl = document.createElement("div");
-      sizeEl.style.width = "100%";
-      sizeEl.style.textAlign = "center";
-      sizeEl.style.fontSize = "11px";
-      sizeEl.style.color = "var(--p-text-muted, #999)";
-      sizeEl.style.paddingBottom = "10px";
-      sizeEl.style.margin = "0";
-      sizeEl.style.display = "none";
-      node._previewSizeEl = sizeEl;
-
-      const container = document.createElement("div");
-      container.style.width = "100%";
-      container.style.boxSizing = "border-box";
-      container.style.display = "flex";
-      container.style.flexDirection = "column";
-      container.style.alignItems = "center";
-      container.style.justifyContent = "center";
-      container.style.overflow = "hidden";
-      container.style.margin = "0";
-      container.appendChild(imgEl);
-      container.appendChild(sizeEl);
-      node._previewContainer = container;
-
-      // The DOM widget has NO getMaxHeight — a fixed max height is what locks
-      // the node's resize handle. Only a min height is set; the container's own
-      // CSS max-height (updated in onResize) caps the image so it stays in-bounds.
-      const previewWidget = this.addDOMWidget("preview", "div", container, {
-        serialize: false,
-        margin: 5,
-        getMinHeight: () => 80,
-      });
-
-      // Cap the preview to the node's available space (below the widgets, minus
-      // a bottom gutter) so the image never covers the resize handle.
-      const resizePreview = () => {
-        const availH = Math.max(80, (node.size?.[1] || 300) - 140);
-        container.style.maxHeight = availH + "px";
-        node.setDirtyCanvas?.(true, true);
-      };
-      const origResize = node.onResize;
-      node.onResize = function (size) {
-        origResize?.call(this, size);
-        resizePreview();
-      };
-      setTimeout(resizePreview, 0);
 
       const updatePreview = async () => {
         const dirW = node.widgets?.find((w) => w.name === "directory");
         const fileW = node.widgets?.find((w) => w.name === "image");
-        const hide = () => {
-          imgEl.src = "";
-          imgEl.style.display = "none";
-          sizeEl.style.display = "none";
-          sizeEl.innerText = "";
-        };
         if (!dirW || !fileW || !fileW.value || fileW.value === "(no images)") {
-          hide();
+          delete node.imgs;
+          delete node.images;
+          node.previewMediaType = undefined;
           return;
         }
+        // Map (directory, file) to ComfyUI's /view filename/type/subfolder so the
+        // mask editor can resolve the image through its standard path. directory
+        // is ROOT-relative (e.g. "input/audio"); file may carry a subpath when
+        // recursion is on (e.g. "sub/xxx.png").
+        const dir = String(dirW.value || "").replace(/^\/+/, "");
+        const file = String(fileW.value || "");
+        const type = dir.split("/")[0] || "input";
+        const dirSub = dir.split("/").slice(1).join("/");
+        const fileSub = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "";
+        const subfolder = [dirSub, fileSub].filter(Boolean).join("/");
+        const filename = file.slice(file.lastIndexOf("/") + 1);
+
+        // Set node.images (the structured form) so getNodeImageUrl uses /view,
+        // which the mask editor's parseImageRef understands. node.imgs is kept in
+        // sync (blob) for the inline thumbnail.
+        node.images = [{ filename, type, subfolder }];
+
         const url = api.apiURL(
           "/kwnodes/preview_image?" +
             new URLSearchParams({ directory: dirW.value, file: fileW.value }),
@@ -333,24 +286,25 @@ app.registerExtension({
         try {
           const resp = await fetch(url);
           if (!resp.ok) {
-            hide();
+            delete node.imgs;
             return;
           }
           const blob = await resp.blob();
           if (blob.size === 0) {
-            hide();
+            delete node.imgs;
             return;
           }
-          if (imgEl._objectUrl) URL.revokeObjectURL(imgEl._objectUrl);
-          imgEl._objectUrl = URL.createObjectURL(blob);
-          imgEl.onload = () => {
-            sizeEl.innerText = `${imgEl.naturalWidth} × ${imgEl.naturalHeight}`;
-            sizeEl.style.display = "block";
+          if (node._previewObjectUrl) URL.revokeObjectURL(node._previewObjectUrl);
+          node._previewObjectUrl = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            node.imgs = [img];
+            node.previewMediaType = "image";
+            node.setDirtyCanvas?.(true, true);
           };
-          imgEl.src = imgEl._objectUrl;
-          imgEl.style.display = "block";
+          img.src = node._previewObjectUrl;
         } catch (_) {
-          hide();
+          delete node.imgs;
         }
       };
       node._updatePreview = updatePreview;
@@ -367,9 +321,9 @@ app.registerExtension({
       }, 300);
       node._previewWatchCleanup = () => clearInterval(node._previewWatch);
       node._previewObjectUrlCleanup = () => {
-        if (imgEl._objectUrl) {
-          URL.revokeObjectURL(imgEl._objectUrl);
-          imgEl._objectUrl = null;
+        if (node._previewObjectUrl) {
+          URL.revokeObjectURL(node._previewObjectUrl);
+          node._previewObjectUrl = null;
         }
       };
 
