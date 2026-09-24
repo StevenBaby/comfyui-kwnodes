@@ -95,11 +95,15 @@ async def list_image_files(request):
 @PromptServer.instance.routes.get("/kwnodes/preview_image")
 async def preview_image(request):
     """Return the bytes of an image so the frontend <img> can show a thumbnail."""
-    directory = os.path.expanduser(request.query.get("directory", ""))
+    from .load_image import _abs, _is_within, ROOT
+
+    directory = _abs(request.query.get("directory", ""))
     file = request.query.get("file", "")
     if not file:
         return web.Response(status=400)
     path = os.path.join(directory, file)
+    if not _is_within(path, ROOT):
+        return web.Response(status=403)
     try:
         with open(path, "rb") as f:
             data = f.read()

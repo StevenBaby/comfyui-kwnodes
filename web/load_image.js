@@ -262,12 +262,30 @@ app.registerExtension({
           node.previewMediaType = undefined;
           return;
         }
+        // Strip a ComfyUI-style 'filename [type]' suffix that the mask editor
+        // writes back after a save (e.g. 'clipspace-painted-masked-…png [input]').
+        let file = String(fileW.value || "").trim();
+        const typeMatch = file.match(/\s*\[([^\]]*)\]$/);
+        let annotation = typeMatch ? typeMatch[1] : "";
+        file = file.replace(/\s*\[[^\]]*\]$/, "").trim();
+        if (!file) {
+          delete node.imgs;
+          delete node.images;
+          node.previewMediaType = undefined;
+          return;
+        }
+        // A mask-editor save lands in the input ROOT (ComfyUI's convention:
+        // the 'clipspace-' prefix is part of the filename, not a subfolder), and
+        // the ' [input]' annotation carries no subfolder. Resolve against the
+        // input root rather than the node's directory field.
+        let dir = String(dirW.value || "").replace(/^\/+/, "");
+        if (annotation === "input") {
+          dir = "input";
+        }
         // Map (directory, file) to ComfyUI's /view filename/type/subfolder so the
         // mask editor can resolve the image through its standard path. directory
         // is ROOT-relative (e.g. "input/audio"); file may carry a subpath when
         // recursion is on (e.g. "sub/xxx.png").
-        const dir = String(dirW.value || "").replace(/^\/+/, "");
-        const file = String(fileW.value || "");
         const type = dir.split("/")[0] || "input";
         const dirSub = dir.split("/").slice(1).join("/");
         const fileSub = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "";
@@ -281,7 +299,7 @@ app.registerExtension({
 
         const url = api.apiURL(
           "/kwnodes/preview_image?" +
-            new URLSearchParams({ directory: dirW.value, file: fileW.value }),
+            new URLSearchParams({ directory: dir, file }),
         );
         try {
           const resp = await fetch(url);

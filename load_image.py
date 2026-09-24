@@ -40,6 +40,34 @@ def _abs(directory):
     return path
 
 
+def _parse_image_value(image):
+    """Normalize the `image` widget value. After a save in the mask editor, the
+    frontend writes a ComfyUI-style 'filename [type]' value (e.g.
+    'clipspace-painted-masked-…png [input]'); return (filename, annotation)
+    where annotation is 'input'/'output'/'' (no annotation)."""
+    v = (image or "").strip()
+    annotation = ""
+    if v.endswith("]"):
+        i = v.rfind(" [")
+        if i > 0:
+            annotation = v[i + 2 : -1].strip()
+            v = v[:i].strip()
+    return v, annotation
+
+
+def _resolve_image_path(directory, image):
+    """Resolve (directory, image) to an absolute path inside ROOT. A mask-editor
+    save carries ' [input]' but its file lives in the input ROOT (the
+    'clipspace-' prefix is part of the filename), so redirect to the input
+    directory in that case."""
+    filename, annotation = _parse_image_value(image)
+    if annotation == "input":
+        directory = os.path.join(ROOT, "input")
+    else:
+        directory = _abs(directory)
+    return os.path.join(directory, filename)
+
+
 class LoadImagePath:
     """Load an image by path (directory autocomplete confined to ROOT) and output
     IMAGE + MASK. With `sub` on (default), the file dropdown also lists images in
@@ -119,24 +147,28 @@ class LoadImagePath:
 
     @classmethod
     def VALIDATE_INPUTS(cls, directory, sub, image):
+        norm, _ = _parse_image_value(image)
         files = cls._list_images_abs(directory, sub)
-        if image not in files and image != "(no images)":
+        if norm not in files and norm != "(no images)":
+            # A mask-editor save ('[input]') lives in the input root, which may
+            # not be listed under `directory`; allow it through.
+            _, annotation = _parse_image_value(image)
+            if annotation == "input":
+                return True
             return [f"image '{image}' not found in {directory}"]
         return True
 
     @classmethod
     def IS_CHANGED(cls, directory, sub, image):
         # mtime of the resolved file: re-reads when the file changes on disk.
-        directory = os.path.expanduser(directory)
-        path = os.path.join(directory, image)
+        path = _resolve_image_path(directory, image)
         try:
             return os.path.getmtime(path)
         except OSError:
             return float("NaN")
 
     def load_image(self, directory, sub, image, reload=0):
-        directory = os.path.expanduser(directory)
-        path = os.path.join(directory, image)
+        path = _resolve_image_path(directory, image)
 
         # Confine reads to the project root; refuse paths that escape upward.
         if not _is_within(path, ROOT):
